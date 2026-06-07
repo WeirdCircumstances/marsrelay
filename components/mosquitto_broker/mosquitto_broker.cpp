@@ -6,6 +6,7 @@
 #include "mqtt_client.h"
 #include "esp_event.h"
 #include <cstring>
+#include "esp_heap_caps.h"
 
 namespace esphome {
 namespace mosquitto_broker {
@@ -157,26 +158,54 @@ void MosquittoBroker::dump_config() {
 }
 
 void MosquittoBroker::publish_message(const std::string &topic, const std::string &payload) {
+  ESP_LOGW(TAG, "MRDBG publish_message ENTER topic=%s payload_len=%u heap=%u uptime=%llu broker_started=%d state=%d client=%p",
+    topic.c_str(),
+    payload.length(),
+    esp_get_free_heap_size(),
+    (uint64_t)(esphome::millis() / 1000),
+    this->broker_started_,
+    (int) this->publish_state_,
+    this->esp_mqtt_client_);
+
   if (!this->broker_started_) {
-    ESP_LOGW(TAG, "Broker not started, skipping publish");
+    ESP_LOGW(TAG, "MRDBG publish_message ABORT broker not started");
     return;
   }
+
   if (this->publish_state_ != mqtt::MQTT_CLIENT_CONNECTED || this->esp_mqtt_client_ == nullptr) {
+    ESP_LOGW(TAG, "MRDBG publish_message publish client not connected, calling ensure_publish_client_");
     this->ensure_publish_client_();
   }
+
   if (this->publish_state_ != mqtt::MQTT_CLIENT_CONNECTED || this->esp_mqtt_client_ == nullptr) {
-    ESP_LOGW(TAG, "Publish client not connected, skipping publish");
+    ESP_LOGW(TAG, "MRDBG publish_message ABORT still not connected state=%d client=%p",
+      (int) this->publish_state_,
+      this->esp_mqtt_client_);
     return;
   }
 
   std::string translated = this->translate_external_to_device_(topic);
-  if (translated != topic) {
-    ESP_LOGV(TAG, "Translated external topic '%s' to device topic '%s'", topic.c_str(), translated.c_str());
-  }
 
-  int msg_id = esp_mqtt_client_publish(this->esp_mqtt_client_, translated.c_str(), payload.c_str(), payload.length(), 0, 0);
+  ESP_LOGW(TAG, "MRDBG publish_message BEFORE esp_mqtt_client_publish translated=%s payload_len=%u heap=%u",
+    translated.c_str(),
+    payload.length(),
+    esp_get_free_heap_size());
+
+  int msg_id = esp_mqtt_client_publish(
+    this->esp_mqtt_client_,
+    translated.c_str(),
+    payload.c_str(),
+    payload.length(),
+    0,
+    0
+  );
+
+  ESP_LOGW(TAG, "MRDBG publish_message AFTER esp_mqtt_client_publish msg_id=%d heap=%u",
+    msg_id,
+    esp_get_free_heap_size());
+
   if (msg_id < 0) {
-    ESP_LOGW(TAG, "Publish failed for %s (error: %d)", translated.c_str(), msg_id);
+    ESP_LOGW(TAG, "MRDBG publish_message FAILED topic=%s error=%d", translated.c_str(), msg_id);
   }
 }
 
@@ -265,17 +294,35 @@ void MosquittoBroker::on_broker_message_callback(char *client, char *topic, char
 }
 
 void MosquittoBroker::handle_message_(char *topic, char *data, int len) {
+  ESP_LOGW(TAG, "MRDBG handle_message ENTER topic=%s payload_len=%d heap=%u uptime=%llu triggers=%u",
+    topic ? topic : "(null)",
+    len,
+    esp_get_free_heap_size(),
+    (uint64_t)(esphome::millis() / 1000),
+    (unsigned) this->message_triggers_.size());
+
   std::string topic_str(topic);
   std::string payload(data, len);
 
   std::string translated = this->translate_device_to_external_(topic_str);
+
   if (translated != topic_str) {
-    ESP_LOGV(TAG, "Translated device topic '%s' to external topic '%s'", topic_str.c_str(), translated.c_str());
+    ESP_LOGW(TAG, "MRDBG translated device topic '%s' to external topic '%s'",
+      topic_str.c_str(),
+      translated.c_str());
   }
+
+  ESP_LOGW(TAG, "MRDBG Local broker -> external trigger topic=%s payload_len=%d",
+    translated.c_str(),
+    len);
 
   for (auto *trigger : this->message_triggers_) {
     trigger->trigger(translated, payload);
   }
+
+  ESP_LOGW(TAG, "MRDBG handle_message DONE topic=%s heap=%u",
+    translated.c_str(),
+    esp_get_free_heap_size());
 }
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
@@ -289,23 +336,46 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
   
   switch ((esp_mqtt_event_id_t)event_id) {
     case MQTT_EVENT_CONNECTED:
-      ESP_LOGI(TAG, "Publish client connected");
+      ESP_LOGW(TAG, "MRDBG Publish client CONNECTED heap=%u uptime=%llu",
+        esp_get_free_heap_size(),
+        (uint64_t)(esphome::millis() / 1000));
       self->set_publish_state(mqtt::MQTT_CLIENT_CONNECTED);
       break;
+
     case MQTT_EVENT_DISCONNECTED:
-      ESP_LOGI(TAG, "Publish client disconnected");
+      ESP_LOGW(TAG, "MRDBG Publish client DISCONNECTED heap=%u uptime=%llu",
+        esp_get_free_heap_size(),
+        (uint64_t)(esphome::millis() / 1000));
       self->set_publish_state(mqtt::MQTT_CLIENT_DISCONNECTED);
       break;
+
     case MQTT_EVENT_ERROR:
-      ESP_LOGW(TAG, "Publish client error");
+      ESP_LOGW(TAG, "MRDBG Publish client ERROR heap=%u uptime=%llu",
+        esp_get_free_heap_size(),
+        (uint64_t)(esphome::millis() / 1000));
       self->set_publish_state(mqtt::MQTT_CLIENT_DISCONNECTED);
       break;
+
+    case MQTT_EVENT_PUBLISHED:
+      ESP_LOGW(TAG, "MRDBG Publish client PUBLISHED msg_id=%d heap=%u",
+        event ? event->msg_id : -1,
+        esp_get_free_heap_size());
+      break;
+
     default:
+      ESP_LOGD(TAG, "MRDBG Publish client event_id=%ld", (long) event_id);
       break;
   }
 }
 
 void MosquittoBroker::ensure_publish_client_() {
+  ESP_LOGW(TAG, "MRDBG ensure_publish_client ENTER broker_started=%d state=%d client=%p heap=%u uptime=%llu",
+    this->broker_started_,
+    (int) this->publish_state_,
+    this->esp_mqtt_client_,
+    esp_get_free_heap_size(),
+    (uint64_t)(esphome::millis() / 1000));
+
   if (!this->broker_started_) {
     return;
   }
@@ -315,6 +385,9 @@ void MosquittoBroker::ensure_publish_client_() {
   
   // Disconnect existing client if any
   if (this->esp_mqtt_client_ != nullptr) {
+    ESP_LOGW(TAG, "MRDBG ensure_publish_client destroying existing client=%p state=%d",
+      this->esp_mqtt_client_,
+      (int) this->publish_state_);
     esp_mqtt_client_stop(this->esp_mqtt_client_);
     esp_mqtt_client_destroy(this->esp_mqtt_client_);
     this->esp_mqtt_client_ = nullptr;
@@ -350,6 +423,9 @@ void MosquittoBroker::ensure_publish_client_() {
   mqtt_cfg.session.disable_clean_session = false;
   
   this->esp_mqtt_client_ = esp_mqtt_client_init(&mqtt_cfg);
+  ESP_LOGW(TAG, "MRDBG esp_mqtt_client_init result client=%p heap=%u",
+    this->esp_mqtt_client_,
+    esp_get_free_heap_size());
   if (this->esp_mqtt_client_ == nullptr) {
     ESP_LOGE(TAG, "Failed to initialize MQTT client");
     return;
@@ -357,6 +433,9 @@ void MosquittoBroker::ensure_publish_client_() {
   
   esp_mqtt_client_register_event(this->esp_mqtt_client_, static_cast<esp_mqtt_event_id_t>(ESP_EVENT_ANY_ID), mqtt_event_handler, this);
   esp_err_t err = esp_mqtt_client_start(this->esp_mqtt_client_);
+  ESP_LOGW(TAG, "MRDBG esp_mqtt_client_start result=%d heap=%u",
+    err,
+    esp_get_free_heap_size());
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Failed to start MQTT client: %d", err);
     esp_mqtt_client_destroy(this->esp_mqtt_client_);
