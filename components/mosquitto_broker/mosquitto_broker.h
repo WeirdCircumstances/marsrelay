@@ -68,6 +68,10 @@ class MosquittoBroker : public Component {
   uint32_t broker_start_at_{0};
   mqtt::MQTTClientState publish_state_{mqtt::MQTT_CLIENT_DISCONNECTED};
   uint32_t connect_begin_{0};
+
+  bool reset_publish_client_requested_{false};
+  uint32_t reset_publish_client_at_{0};
+
   esp_mqtt_client_handle_t esp_mqtt_client_{nullptr};
   std::vector<MosquittoMessageTrigger *> message_triggers_;
   std::vector<std::pair<std::string, std::string>> id_mappings_;

@@ -106,6 +106,25 @@ void MosquittoBroker::setup() {
 
 void MosquittoBroker::loop() {
   if (!this->broker_started_ && esphome::millis() - this->broker_start_at_ > 1000) {
+    if (this->reset_publish_client_requested_ &&
+        this->esp_mqtt_client_ != nullptr &&
+        esphome::millis() >= this->reset_publish_client_at_) {
+
+      ESP_LOGW(TAG, "MRDBG reset publish client requested: destroying client=%p state=%d heap=%u internal_heap=%u",
+        this->esp_mqtt_client_,
+        (int) this->publish_state_,
+        esp_get_free_heap_size(),
+        heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+
+      esp_mqtt_client_stop(this->esp_mqtt_client_);
+      esp_mqtt_client_destroy(this->esp_mqtt_client_);
+      this->esp_mqtt_client_ = nullptr;
+      this->publish_state_ = mqtt::MQTT_CLIENT_DISCONNECTED;
+      this->reset_publish_client_requested_ = false;
+
+      this->connect_begin_ = esphome::millis() + 30000;
+      return;
+    }
     if (this->broker_task_handle_ == nullptr) {
       // 12 KiB stack: mbedTLS handshakes inside the broker task can use 8 KiB+ on
       // their own, so 4 KiB overflowed as soon as a TLS client connected.
@@ -370,17 +389,27 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
       break;
 
     case MQTT_EVENT_DISCONNECTED:
-      ESP_LOGW(TAG, "MRDBG Publish client DISCONNECTED heap=%u uptime=%llu",
+      ESP_LOGW(TAG, "MRDBG Publish client DISCONNECTED heap=%u internal_heap=%u uptime=%llu client=%p",
         esp_get_free_heap_size(),
-        (uint64_t)(esphome::millis() / 1000));
+        heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+        (uint64_t)(esphome::millis() / 1000),
+        self->esp_mqtt_client_);
+
       self->set_publish_state(mqtt::MQTT_CLIENT_DISCONNECTED);
+      self->reset_publish_client_requested_ = true;
+      self->reset_publish_client_at_ = esphome::millis() + 5000;
       break;
 
     case MQTT_EVENT_ERROR:
-      ESP_LOGW(TAG, "MRDBG Publish client ERROR heap=%u uptime=%llu",
+      ESP_LOGW(TAG, "MRDBG Publish client ERROR heap=%u internal_heap=%u uptime=%llu client=%p",
         esp_get_free_heap_size(),
-        (uint64_t)(esphome::millis() / 1000));
+        heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+        (uint64_t)(esphome::millis() / 1000),
+        self->esp_mqtt_client_);
+
       self->set_publish_state(mqtt::MQTT_CLIENT_DISCONNECTED);
+      self->reset_publish_client_requested_ = true;
+      self->reset_publish_client_at_ = esphome::millis() + 5000;
       break;
 
     case MQTT_EVENT_PUBLISHED:
@@ -472,6 +501,8 @@ void MosquittoBroker::ensure_publish_client_() {
   
   this->publish_state_ = mqtt::MQTT_CLIENT_CONNECTING;
   this->connect_begin_ = esphome::millis();
+  this->reset_publish_client_requested_ = false;
+  this->reset_publish_client_at_ = 0;
   ESP_LOGI(TAG, "Connecting publish client to broker on port %u", this->port_);
 }
 
