@@ -130,6 +130,23 @@ void MosquittoBroker::loop() {
       // Initial connection attempt or retry after delay
       this->ensure_publish_client_();
     } else if (this->esp_mqtt_client_ != nullptr && this->publish_state_ != mqtt::MQTT_CLIENT_CONNECTED) {
+      uint32_t internal_heap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+
+      if (this->broker_started_ && this->esp_mqtt_client_ != nullptr && internal_heap < 60000) {
+        ESP_LOGW(TAG, "MRDBG LOW INTERNAL HEAP cleanup: internal_heap=%u state=%d client=%p",
+          internal_heap,
+          (int) this->publish_state_,
+          this->esp_mqtt_client_);
+
+        esp_mqtt_client_stop(this->esp_mqtt_client_);
+        esp_mqtt_client_destroy(this->esp_mqtt_client_);
+        this->esp_mqtt_client_ = nullptr;
+        this->publish_state_ = mqtt::MQTT_CLIENT_DISCONNECTED;
+        this->connect_begin_ = esphome::millis() + 30000;
+
+        return;
+      }
+
       uint32_t retry_interval = 30000;  // 30 seconds between retries
       if (esphome::millis() - this->connect_begin_ > retry_interval) {
         ESP_LOGW(TAG, "Publish client not connected after %lu ms, reconnecting...", 
@@ -170,6 +187,14 @@ void MosquittoBroker::publish_message(const std::string &topic, const std::strin
 
   if (!this->broker_started_) {
     ESP_LOGW(TAG, "MRDBG publish_message ABORT broker not started");
+    return;
+  }
+
+  uint32_t internal_heap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+
+  if (internal_heap < 80000) {
+    ESP_LOGW(TAG, "MRDBG ensure_publish_client ABORT low internal heap=%u", internal_heap);
+    this->connect_begin_ = esphome::millis() + 30000;
     return;
   }
 
