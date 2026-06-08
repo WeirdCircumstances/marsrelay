@@ -40,6 +40,7 @@ class MosquittoBroker : public Component {
   void set_max_clients(uint16_t max_clients) { max_clients_ = max_clients; }
   void set_tls(bool tls) { tls_enabled_ = tls; }
   void set_tls_skip_verification(bool skip) { tls_skip_verification_ = skip; }
+  void request_publish_client_reset(const char *reason);
 
   void publish_message(const std::string &topic, const std::string &payload);
   void add_message_trigger(MosquittoMessageTrigger *trigger) { this->message_triggers_.push_back(trigger); }

@@ -181,6 +181,20 @@ void MosquittoBroker::loop() {
   }
 }
 
+void MosquittoBroker::request_publish_client_reset(const char *reason) {
+  ESP_LOGW(TAG, "MRDBG request_publish_client_reset reason=%s heap=%u internal_heap=%u uptime=%llu client=%p state=%d",
+    reason,
+    esp_get_free_heap_size(),
+    heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+    (uint64_t)(esphome::millis() / 1000),
+    this->esp_mqtt_client_,
+    (int) this->publish_state_);
+
+  this->set_publish_state(mqtt::MQTT_CLIENT_DISCONNECTED);
+  this->reset_publish_client_requested_ = true;
+  this->reset_publish_client_at_ = esphome::millis() + 5000;
+}
+
 void MosquittoBroker::dump_config() {
   ESP_LOGCONFIG(TAG, "Mosquitto Broker:");
   ESP_LOGCONFIG(TAG, "  Port: %u", this->port_);
@@ -389,27 +403,11 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
       break;
 
     case MQTT_EVENT_DISCONNECTED:
-      ESP_LOGW(TAG, "MRDBG Publish client DISCONNECTED heap=%u internal_heap=%u uptime=%llu client=%p",
-        esp_get_free_heap_size(),
-        heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-        (uint64_t)(esphome::millis() / 1000),
-        self->esp_mqtt_client_);
-
-      self->set_publish_state(mqtt::MQTT_CLIENT_DISCONNECTED);
-      self->reset_publish_client_requested_ = true;
-      self->reset_publish_client_at_ = esphome::millis() + 5000;
+      self->request_publish_client_reset("MQTT_EVENT_DISCONNECTED");
       break;
 
     case MQTT_EVENT_ERROR:
-      ESP_LOGW(TAG, "MRDBG Publish client ERROR heap=%u internal_heap=%u uptime=%llu client=%p",
-        esp_get_free_heap_size(),
-        heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-        (uint64_t)(esphome::millis() / 1000),
-        self->esp_mqtt_client_);
-
-      self->set_publish_state(mqtt::MQTT_CLIENT_DISCONNECTED);
-      self->reset_publish_client_requested_ = true;
-      self->reset_publish_client_at_ = esphome::millis() + 5000;
+      self->request_publish_client_reset("MQTT_EVENT_ERROR");
       break;
 
     case MQTT_EVENT_PUBLISHED:
