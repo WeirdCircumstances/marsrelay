@@ -158,10 +158,11 @@ void MosquittoBroker::dump_config() {
 }
 
 void MosquittoBroker::publish_message(const std::string &topic, const std::string &payload) {
-  ESP_LOGW(TAG, "MRDBG publish_message ENTER topic=%s payload_len=%u heap=%u uptime=%llu broker_started=%d state=%d client=%p",
+  ESP_LOGW(TAG, "MRDBG publish_message ENTER topic=%s payload_len=%u heap=%u internal_heap=%u uptime=%llu broker_started=%d state=%d client=%p",
     topic.c_str(),
     payload.length(),
     esp_get_free_heap_size(),
+    heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
     (uint64_t)(esphome::millis() / 1000),
     this->broker_started_,
     (int) this->publish_state_,
@@ -294,10 +295,11 @@ void MosquittoBroker::on_broker_message_callback(char *client, char *topic, char
 }
 
 void MosquittoBroker::handle_message_(char *topic, char *data, int len) {
-  ESP_LOGW(TAG, "MRDBG handle_message ENTER topic=%s payload_len=%d heap=%u uptime=%llu triggers=%u",
+  ESP_LOGW(TAG, "MRDBG handle_message ENTER topic=%s payload_len=%d heap=%u internal_heap=%u uptime=%llu triggers=%u",
     topic ? topic : "(null)",
     len,
     esp_get_free_heap_size(),
+    heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
     (uint64_t)(esphome::millis() / 1000),
     (unsigned) this->message_triggers_.size());
 
